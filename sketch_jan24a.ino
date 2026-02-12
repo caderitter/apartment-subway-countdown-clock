@@ -14,6 +14,7 @@
  All text above must be included in any redistribution.
  ******************************************************************/
 
+#define USE_ADAFRUIT_GFX_FONTS
 
 #include <SPI.h>
 #include <pb_encode.h>
@@ -26,11 +27,11 @@
 #include "WiFiS3.h"
 #include "arduino_secrets.h"
 #include "Adafruit_GFX.h"
+#include "Fonts/FreeSans12pt7b.h"
+#include "Fonts/FreeMono9pt7b.h"
 #include "Adafruit_RA8875.h"
-#include "Fonts/FreeSansBold18pt7b.h"
 #include "gtfs-realtime.pb.h"
 #include "gtfs-realtime-NYCT.pb.h"
-
 #include "Arduino_LED_Matrix.h"
 
 static bool pb_print_write(pb_ostream_t *stream, const pb_byte_t *buf, size_t count) {
@@ -104,27 +105,23 @@ void setup() {
   tft.PWM1config(true, RA8875_PWM_CLK_DIV1024);  // PWM output for backlight
   tft.PWM1out(255);
 
-  // writeReg(0x22, 1 << 4);
-  // writeReg(0x20, 1 << 2);
-
   tft.fillScreen(RA8875_BLACK);
 
   /* Switch to text mode */
-  tft.textMode();
-  tft.cursorBlink(32);
-
-  /* Set the cursor location (in pixels) */
-  tft.textSetCursor(10, 10);
-  tft.textTransparent(RA8875_WHITE);
+  tft.graphicsMode();
+  tft.setFont(&FreeMono9pt7b);
+  tft.setCursor(0, 10);
+  tft.setTextSize(1);
 
   matrix.loadSequence(LEDMATRIX_ANIMATION_WIFI_SEARCH);
   matrix.begin();
   matrix.play(true);
+
   // attempt to connect to WiFi network:
   while (status != WL_CONNECTED) {
-    tft.textWrite("Attempting to connect to WPA SSID: ");
-    tft.textWrite(ssid);
-    tft.textWrite("... ");
+    tft.print("Attempting to connect to WPA SSID: ");
+    tft.print(ssid);
+    tft.print("...\n");
     // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
     status = WiFi.begin(ssid, pass);
 
@@ -133,18 +130,17 @@ void setup() {
   }
 
   // you're connected now, so print out the data:
-  matrix.clear();
-  tft.textWrite("Connected to WiFi! ");
+  tft.println("Connected to WiFi!");
   printCurrentNet();
   printWifiData();
+  matrix.clear();
   setUpRTC();
 
-  tft.textWrite("Starting connection to MTA server... ");
+  tft.println("Starting connection to MTA server...");
   if (!client.connect(g_train_endpoint, 443)) {
-    tft.textWrite("Failed. ");
+    tft.println("Failed.");
   } else {
-    tft.textWrite("Connected to MTA server! ");
-
+    tft.println("Connected to MTA server!");
     fetchAndDecode();
   }
   previousMillis = millis();
@@ -219,14 +215,18 @@ void loop() {
 
 void setUpRTC() {
   RTC.begin();
-  tft.textWrite("Connecting to NTP server... ");
+  tft.println("Connecting to NTP server...");
   timeClient.begin();
-  timeClient.update();
+  if (!timeClient.update()) {
+    tft.println("Failed.");
+    while (1)
+      ;
+  }
   auto timezoneOffset = -5;
   auto unixTime = timeClient.getEpochTime() + (timezoneOffset * 3600);
-  tft.textWrite("Unix time: ");
-  tft.textWrite(std::to_string(unixTime).c_str());
-  tft.textWrite(" ");
+  tft.print("Unix time: ");
+  tft.print(std::to_string(unixTime).c_str());
+  tft.print("\n");
   RTCTime timeToSet = RTCTime(unixTime);
   RTC.setTime(timeToSet);
 
@@ -312,44 +312,14 @@ bool feed_entity_callback(pb_istream_t *stream, const pb_field_t *field, void **
 void printWifiData() {
   // print your board's IP address:
   IPAddress ip = WiFi.localIP();
-  tft.textWrite("IP Address: ");
-  tft.textWrite(ip.toString().c_str());
-  tft.textWrite(" ");
+  tft.print("IP Address: ");
+  tft.print(ip.toString().c_str());
+  tft.print("\n");
 }
 
 void printCurrentNet() {
   // print the SSID of the network you're attached to:
-  tft.textWrite("SSID: ");
-  tft.textWrite(WiFi.SSID());
-  tft.textWrite(" ");
-}
-
-void writeReg(uint8_t reg, uint8_t val) {
-  writeCommand(reg);
-  writeData(val);
-}
-// *--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*
-void writeData(uint8_t d) {
-  uint32_t spi_speed = 12000000;  //!< 12MHz
-  digitalWrite(RA8875_CS, LOW);
-  //spi_begin();
-  SPI.beginTransaction(SPISettings(spi_speed, MSBFIRST, SPI_MODE0));
-  SPI.transfer(RA8875_DATAWRITE);
-  SPI.transfer(d);
-  //spi_end();
-  SPI.endTransaction();
-  digitalWrite(RA8875_CS, HIGH);
-}
-// *--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*
-void writeCommand(uint8_t d) {
-  uint32_t spi_speed = 12000000;  //!< 12MHz
-  digitalWrite(RA8875_CS, LOW);
-  //spi_begin();
-  SPI.beginTransaction(SPISettings(spi_speed, MSBFIRST, SPI_MODE0));
-
-  SPI.transfer(RA8875_CMDWRITE);
-  SPI.transfer(d);
-  //spi_end();
-  SPI.endTransaction();
-  digitalWrite(RA8875_CS, HIGH);
+  tft.print("SSID: ");
+  tft.print(WiFi.SSID());
+  tft.print("\n");
 }
