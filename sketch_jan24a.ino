@@ -16,6 +16,9 @@
 
 #define USE_ADAFRUIT_GFX_FONTS
 
+#include <cstring>
+#include <map>
+#include <avr/pgmspace.h>
 #include <SPI.h>
 #include <pb_encode.h>
 #include <pb_decode.h>
@@ -88,6 +91,33 @@ NTPClient timeClient(Udp);
 
 ArduinoLEDMatrix matrix;
 
+// get the map lazily so the arduino doesn't crash during initialization
+std::map<std::string, std::string> &getStationMap() {
+  static std::map<std::string, std::string> stationMap = {
+    { "F27", "Church Av" },
+    { "F26", "Fort Hamilton Pkwy" },
+    { "F25", "15-St Prospect Park" },
+    { "F24", "7 Av" },
+    { "F23", "4 Av-9 St" },
+    { "F22", "Smith-9 Sts" },
+    { "F21", "Carroll St" },
+    { "F20", "Bergen St" },
+    { "G22", "Court Sq" },
+    { "G24", "21 St" },
+    { "G26", "Greenpoint Av" },
+    { "G28", "Nassau Av" },
+    { "G29", "Metropolitan Av" },
+    { "G30", "Broadway" },
+    { "G31", "Flushing Av" },
+    { "G32", "Myrtle-Willoughby Avs" },
+    { "G33", "Bedford-Nostrand Avs" },
+    { "G34", "Classon Av" },
+    { "G35", "Clinton-Washington Avs" },
+    { "G36", "Fulton St" }
+  };
+  return stationMap;
+}
+
 void setup() {
   Serial.begin(9600);
   while (!Serial)
@@ -119,28 +149,28 @@ void setup() {
 
   // attempt to connect to WiFi network:
   while (status != WL_CONNECTED) {
-    tft.print("Attempting to connect to WPA SSID: ");
+    tft.print(F("Attempting to connect to WPA SSID: "));
     tft.print(ssid);
     tft.print("...\n");
     // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
     status = WiFi.begin(ssid, pass);
 
     // wait for connection
-    delay(1000);
+    delay(3000);
   }
 
   // you're connected now, so print out the data:
-  tft.println("Connected to WiFi!");
+  tft.println(F("Connected to WiFi!"));
   printCurrentNet();
   printWifiData();
   matrix.clear();
   setUpRTC();
 
-  tft.println("Starting connection to MTA server...");
+  tft.println(F("Starting connection to MTA server..."));
   if (!client.connect(g_train_endpoint, 443)) {
     tft.println("Failed.");
   } else {
-    tft.println("Connected to MTA server!");
+    tft.println(F("Connected to MTA server!"));
     fetchAndDecode();
   }
   previousMillis = millis();
@@ -153,13 +183,32 @@ void drawStaticUI() {
   tft.fillRect(20, 85, 680, 75, 0xc618);
 }
 
+#define MAX_TRIPS 5
+
+typedef struct {
+  char trip_id[64];
+  char terminal_stop_id[32];
+  int32_t arrival_time;
+} trip_info_t;
+
+typedef struct {
+  const char *target_stop_id;
+  trip_info_t trips[MAX_TRIPS];
+  int trip_count;
+
+  // Temporary state for current trip being processed
+  char current_last_stop[32];
+  bool current_trip_has_target;
+  char current_trip_id[64];
+} stop_search_context_t;
+
 void fetchAndDecode() {
   matrix.loadSequence(LEDMATRIX_ANIMATION_INFINITY_LOOP_LOADER);
   matrix.play(true);
 
-  client.println("GET /Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g HTTP/1.1");
-  client.println("Host: api-endpoint.mta.info");
-  client.println("Connection: Keep-Alive");
+  client.println(F("GET /Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g HTTP/1.1"));
+  client.println(F("Host: api-endpoint.mta.info"));
+  client.println(F("Connection: Keep-Alive"));
   client.println();
 
   // Skip HTTP headers
@@ -173,20 +222,51 @@ void fetchAndDecode() {
 
   pb_istream_t stream = as_pb_istream(client);
 
+  stop_search_context_t context;
+  memset(&context, 0, sizeof(context));
+  context.target_stop_id = g_target_stop_id;
+  context.trip_count = 0;
+
   transit_realtime_FeedMessage feed = transit_realtime_FeedMessage_init_zero;
   feed.entity.funcs.decode = &feed_entity_callback;
+  feed.entity.arg = &context;
 
   // Decode
   if (!pb_decode(&stream, transit_realtime_FeedMessage_fields, &feed)) {
-    Serial.println("Decode failed");
-    Serial.println(PB_GET_ERROR(&stream));
-    Serial.println("Bytes left in stream:");
-    Serial.println(stream.bytes_left);
     return;
+  }
+  // Print results
+  Serial.print("Found ");
+  Serial.print(context.trip_count);
+  Serial.println(F(" trips serving this stop:"));
+
+  RTCTime currentTime;
+  RTC.getTime(currentTime);
+
+  std::map<std::string, std::string> stationMap = getStationMap();
+
+  for (int i = 0; i < context.trip_count; i++) {
+    Serial.print("  Trip ");
+    Serial.print(context.trips[i].trip_id);
+    Serial.print(" → ");
+
+    // remove the N or S so we can fetch the stop name from the map
+    char *stopId = context.trips[i].terminal_stop_id;
+    int stopIdLen = std::strlen(stopId);
+    stopId[stopIdLen - 1] = '\0';
+    Serial.print(stationMap.at(stopId).c_str());
+
+    Serial.print(" @ ");
+    int64_t arrivalTime = context.trips[i].arrival_time - (5 * 3600);
+    int64_t diffSeconds = arrivalTime - currentTime.getUnixTime();
+    int64_t diffMinutes = diffSeconds / 60;
+    char buffer[8];
+    sprintf(buffer, "%Ld", diffMinutes);
+    Serial.println(buffer);
   }
 
   matrix.clear();
-  Serial.println("Decode successful!");
+  Serial.println(F("Decode successful!"));
 }
 
 void loop() {
@@ -201,11 +281,11 @@ void loop() {
     previousMillis = currentMillis;
 
     if (!client.connected()) {
-      Serial.println("Client lost connection to server. Trying to reconnect...");
+      Serial.println(F("Client lost connection to server. Trying to reconnect..."));
       if (!client.connect(g_train_endpoint, 443)) {
-        Serial.println("Failed to reconnect");
+        Serial.println(F("Failed to reconnect"));
       } else {
-        Serial.println("Reconnected!");
+        Serial.println(F("Reconnected!"));
       }
     } else {
       fetchAndDecode();
@@ -215,7 +295,7 @@ void loop() {
 
 void setUpRTC() {
   RTC.begin();
-  tft.println("Connecting to NTP server...");
+  tft.println(F("Connecting to NTP server..."));
   timeClient.begin();
   if (!timeClient.update()) {
     tft.println("Failed.");
@@ -233,13 +313,9 @@ void setUpRTC() {
   // Retrieve the date and time from the RTC and print them
   RTCTime currentTime;
   RTC.getTime(currentTime);
-  Serial.println("The RTC was just set to: " + String(currentTime));
+  Serial.print(F("The RTC was just set to: "));
+  Serial.print(String(currentTime));
 }
-
-typedef struct {
-  bool found_target_in_current_trip;
-  char terminal_stop_id[32];
-} stop_search_context_t;
 
 bool decode_string_callback(pb_istream_t *stream, const pb_field_t *field, void **arg) {
   char *dest = (char *)(*arg);
@@ -256,54 +332,73 @@ bool decode_string_callback(pb_istream_t *stream, const pb_field_t *field, void 
 }
 
 bool stop_time_update_callback(pb_istream_t *stream, const pb_field_t *field, void **arg) {
+  stop_search_context_t *context = (stop_search_context_t *)(*arg);
+
+  char stop_id[32];
   transit_realtime_TripUpdate_StopTimeUpdate stop_time_update =
     transit_realtime_TripUpdate_StopTimeUpdate_init_zero;
 
-  char stop_id_buffer[32];
-  stop_time_update.stop_id.funcs.decode = &decode_string_callback;
-  stop_time_update.stop_id.arg = stop_id_buffer;
+  stop_time_update.stop_id.funcs.decode = decode_string_callback;
+  stop_time_update.stop_id.arg = stop_id;
 
   if (!pb_decode(stream, transit_realtime_TripUpdate_StopTimeUpdate_fields, &stop_time_update)) {
-    Serial.println("stop_time_update_callback failed");
-    Serial.println("Bytes left in stream:");
-    Serial.println(stream->bytes_left);
     return false;
   }
 
-  Serial.println(stop_id_buffer);
+  // Always update the last stop seen
+  strncpy(context->current_last_stop, stop_id, sizeof(context->current_last_stop) - 1);
 
-  if (g_target_stop_id && strcmp(stop_id_buffer, g_target_stop_id) == 0) {
-    int64_t arrivalTime = stop_time_update.arrival.time - (5 * 3600);
-    RTCTime currentTime;
-    RTC.getTime(currentTime);
-    int64_t diffSeconds = arrivalTime - currentTime.getUnixTime();
-    int64_t diffMinutes = diffSeconds / 60;
+  // Check if this is our target stop
+  if (strcmp(stop_id, context->target_stop_id) == 0) {
+    context->current_trip_has_target = true;
 
-    char buffer[8];
-    sprintf(buffer, "%Ld", diffMinutes);
-
-    tft.textWrite(stop_id_buffer);
-    tft.textWrite(" ");
-    tft.textWrite(" ");
-    tft.textWrite("Expected arrival in ");
-    tft.textWrite(buffer);
-    tft.textWrite(" minutes. ");
-    Serial.println(diffMinutes);
+    // Store arrival time if available
+    if (context->trip_count < MAX_TRIPS && stop_time_update.has_arrival) {
+      context->trips[context->trip_count].arrival_time = stop_time_update.arrival.time;
+    }
   }
 
   return true;
 }
 
 bool feed_entity_callback(pb_istream_t *stream, const pb_field_t *field, void **arg) {
+  stop_search_context_t *context = (stop_search_context_t *)(*arg);
+
   transit_realtime_FeedEntity entity = transit_realtime_FeedEntity_init_zero;
 
+  // Reset per-trip state
+  context->current_last_stop[0] = '\0';
+  context->current_trip_has_target = false;
+
+  // Set up string callback for trip_id
+  entity.trip_update.trip.trip_id.funcs.decode = decode_string_callback;
+  entity.trip_update.trip.trip_id.arg = context->current_trip_id;
+
+  // Set up nested callbacks
   entity.trip_update.stop_time_update.funcs.decode = &stop_time_update_callback;
+  entity.trip_update.stop_time_update.arg = context;
 
   if (!pb_decode(stream, transit_realtime_FeedEntity_fields, &entity)) {
-    Serial.println("feed_entity_callback failed");
-    Serial.println("Bytes left in stream:");
-    Serial.println(stream->bytes_left);
     return false;
+  }
+
+  // After processing all stops, check if this trip had our target
+  if (context->current_trip_has_target && context->trip_count < MAX_TRIPS) {
+    // Save this trip's info
+    strncpy(context->trips[context->trip_count].trip_id,
+            context->current_trip_id,
+            sizeof(context->trips[context->trip_count].trip_id) - 1);
+
+    strncpy(context->trips[context->trip_count].terminal_stop_id,
+            context->current_last_stop,
+            sizeof(context->trips[context->trip_count].terminal_stop_id) - 1);
+
+    Serial.print("Trip ");
+    Serial.print(context->current_trip_id);
+    Serial.print(" terminates at: ");
+    Serial.println(context->current_last_stop);
+
+    context->trip_count++;
   }
 
   return true;
