@@ -32,6 +32,7 @@
 #include "Adafruit_GFX.h"
 #include "Fonts/FreeSansBold18pt7b.h"
 #include "Fonts/FreeMono9pt7b.h"
+#include "Fonts/FreeSans9pt7b.h"
 #include "Adafruit_RA8875.h"
 #include "gtfs-realtime.pb.h"
 #include "gtfs-realtime-NYCT.pb.h"
@@ -126,23 +127,30 @@ void drawBullet(int x, int y) {
 }
 
 void drawTrips(std::vector<std::pair<std::string, int>> trips) {
-  tft.setFont(&FreeSansBold18pt7b);
   for (int i = 0; i < trips.size(); i++) {
+    tft.setFont(&FreeSansBold18pt7b);
     std::pair<std::string, int> trip = trips[i];
     std::string terminal_station_name = trip.first;
     int minutes_until = trip.second;
 
-    // tft.fillRect(0, (i * 130) + 10, 800 - 10, 130, 0x6b4d);
-    drawBullet(60, (i * 120) + 60);
-    tft.setCursor(120, (i * 120) + 70);
+    tft.fillRect(40, (i * 120) + 6, 800 - 30, 110, 0x3166);
+    drawBullet(90, (i * 120) + 60);
     tft.setTextSize(1);
+    tft.setCursor(7, (i * 120) + 70);
+    tft.print(i + 1);
+    tft.setCursor(140, (i * 120) + 70);
     tft.print(terminal_station_name.c_str());
 
-    tft.setCursor(800 - 100, (i * 120) + 80);
+    int minutes_until_cursor_x = minutes_until < 10 ? 800 - 75 : 800 - 95;
+    tft.setCursor(minutes_until_cursor_x, (i * 120) + 70);
     tft.setTextSize(2);
-    char buffer[8];
-    sprintf(buffer, "%Ld", minutes_until);
-    tft.print(buffer);
+    // char buffer[8];
+    // sprintf(buffer, "%Ld", minutes_until);
+    tft.print(minutes_until);
+    tft.setFont(&FreeSans9pt7b);
+    tft.setTextSize(0);
+    tft.setCursor(800 - 72, (i * 120) + 95);
+    tft.print("MIN");
   }
 }
 
