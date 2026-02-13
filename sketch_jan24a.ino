@@ -30,7 +30,7 @@
 #include "WiFiS3.h"
 #include "arduino_secrets.h"
 #include "Adafruit_GFX.h"
-#include "Fonts/FreeSansBold24pt7b.h"
+#include "Fonts/FreeSansBold18pt7b.h"
 #include "Fonts/FreeMono9pt7b.h"
 #include "Adafruit_RA8875.h"
 #include "gtfs-realtime.pb.h"
@@ -119,26 +119,26 @@ std::map<std::string, std::string> &getStationMap() {
 }
 
 void drawBullet(int x, int y) {
-  tft.fillCircle(x, y, 55, 0x7ca6);
-  tft.setFont(&FreeSansBold24pt7b);
+  tft.fillCircle(x, y, 40, 0x7ca6);
   tft.setTextSize(2);
-  tft.setCursor(x - 38, y + 32);
+  tft.setCursor(x - 28, y + 23);
   tft.print("G");
 }
 
 void drawTrips(std::vector<std::pair<std::string, int>> trips) {
+  tft.setFont(&FreeSansBold18pt7b);
   for (int i = 0; i < trips.size(); i++) {
     std::pair<std::string, int> trip = trips[i];
     std::string terminal_station_name = trip.first;
     int minutes_until = trip.second;
 
     // tft.fillRect(0, (i * 130) + 10, 800 - 10, 130, 0x6b4d);
-    drawBullet(65, (i * 130) + 85);
-    tft.setCursor(130, (i * 130) + 90);
+    drawBullet(60, (i * 120) + 60);
+    tft.setCursor(120, (i * 120) + 70);
     tft.setTextSize(1);
     tft.print(terminal_station_name.c_str());
 
-    tft.setCursor(800 - 120, (i * 130) + 90);
+    tft.setCursor(800 - 100, (i * 120) + 80);
     tft.setTextSize(2);
     char buffer[8];
     sprintf(buffer, "%Ld", minutes_until);
@@ -167,8 +167,6 @@ void setup() {
 
   /* Switch to text mode */
   tft.graphicsMode();
-
-  drawBullet(100, 300);
 
   tft.setFont(&FreeMono9pt7b);
   tft.setCursor(0, 10);
@@ -360,6 +358,8 @@ void loop() {
 
     if (!client.connected()) {
       tft.fillScreen(RA8875_BLACK);
+      tft.setCursor(0, 10);
+      tft.setFont(&FreeMono9pt7b);
       Serial.println(F("Client lost connection to server. Trying to reconnect..."));
       if (!client.connect(g_train_endpoint, 443)) {
         Serial.println(F("Failed to reconnect"));
