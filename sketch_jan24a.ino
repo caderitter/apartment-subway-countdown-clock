@@ -30,7 +30,7 @@
 #include "WiFiS3.h"
 #include "arduino_secrets.h"
 #include "Adafruit_GFX.h"
-#include "Fonts/FreeSans12pt7b.h"
+#include "Fonts/FreeSansBold24pt7b.h"
 #include "Fonts/FreeMono9pt7b.h"
 #include "Adafruit_RA8875.h"
 #include "gtfs-realtime.pb.h"
@@ -118,6 +118,34 @@ std::map<std::string, std::string> &getStationMap() {
   return stationMap;
 }
 
+void drawBullet(int x, int y) {
+  tft.fillCircle(x, y, 55, 0x7ca6);
+  tft.setFont(&FreeSansBold24pt7b);
+  tft.setTextSize(2);
+  tft.setCursor(x - 38, y + 32);
+  tft.print("G");
+}
+
+void drawTrips(std::vector<std::pair<std::string, int>> trips) {
+  for (int i = 0; i < trips.size(); i++) {
+    std::pair<std::string, int> trip = trips[i];
+    std::string terminal_station_name = trip.first;
+    int minutes_until = trip.second;
+
+    // tft.fillRect(0, (i * 130) + 10, 800 - 10, 130, 0x6b4d);
+    drawBullet(65, (i * 130) + 85);
+    tft.setCursor(130, (i * 130) + 90);
+    tft.setTextSize(1);
+    tft.print(terminal_station_name.c_str());
+
+    tft.setCursor(800 - 120, (i * 130) + 90);
+    tft.setTextSize(2);
+    char buffer[8];
+    sprintf(buffer, "%Ld", minutes_until);
+    tft.print(buffer);
+  }
+}
+
 void setup() {
   Serial.begin(9600);
   while (!Serial)
@@ -139,6 +167,9 @@ void setup() {
 
   /* Switch to text mode */
   tft.graphicsMode();
+
+  drawBullet(100, 300);
+
   tft.setFont(&FreeMono9pt7b);
   tft.setCursor(0, 10);
   tft.setTextSize(1);
@@ -146,6 +177,7 @@ void setup() {
   matrix.loadSequence(LEDMATRIX_ANIMATION_WIFI_SEARCH);
   matrix.begin();
   matrix.play(true);
+
 
   // attempt to connect to WiFi network:
   while (status != WL_CONNECTED) {
@@ -183,23 +215,34 @@ void drawStaticUI() {
   tft.fillRect(20, 85, 680, 75, 0xc618);
 }
 
-#define MAX_TRIPS 5
+#define MAX_TRIPS 2
 
 typedef struct {
   char trip_id[64];
   char terminal_stop_id[32];
   int32_t arrival_time;
+  char direction_stop_id[32];
 } trip_info_t;
 
 typedef struct {
-  const char *target_stop_id;
-  trip_info_t trips[MAX_TRIPS];
-  int trip_count;
+  // Target stops (northbound and southbound)
+  const char *northbound_stop_id;  // "G35N"
+  const char *southbound_stop_id;  // "G35S"
+
+  // Results for both directions
+  trip_info_t northbound_trips[MAX_TRIPS];
+  int northbound_count;
+
+  trip_info_t southbound_trips[MAX_TRIPS];
+  int southbound_count;
 
   // Temporary state for current trip being processed
   char current_last_stop[32];
-  bool current_trip_has_target;
+  bool current_trip_has_northbound;
+  bool current_trip_has_southbound;
   char current_trip_id[64];
+  int32_t current_northbound_arrival;
+  int32_t current_southbound_arrival;
 } stop_search_context_t;
 
 void fetchAndDecode() {
@@ -224,8 +267,10 @@ void fetchAndDecode() {
 
   stop_search_context_t context;
   memset(&context, 0, sizeof(context));
-  context.target_stop_id = g_target_stop_id;
-  context.trip_count = 0;
+  context.northbound_stop_id = "G35N";
+  context.southbound_stop_id = "G35S";
+  context.northbound_count = 0;
+  context.southbound_count = 0;
 
   transit_realtime_FeedMessage feed = transit_realtime_FeedMessage_init_zero;
   feed.entity.funcs.decode = &feed_entity_callback;
@@ -235,35 +280,68 @@ void fetchAndDecode() {
   if (!pb_decode(&stream, transit_realtime_FeedMessage_fields, &feed)) {
     return;
   }
-  // Print results
-  Serial.print("Found ");
-  Serial.print(context.trip_count);
-  Serial.println(F(" trips serving this stop:"));
 
   RTCTime currentTime;
   RTC.getTime(currentTime);
 
   std::map<std::string, std::string> stationMap = getStationMap();
 
-  for (int i = 0; i < context.trip_count; i++) {
-    Serial.print("  Trip ");
-    Serial.print(context.trips[i].trip_id);
-    Serial.print(" → ");
+  std::vector<std::pair<std::string, int>> trips;
 
+  Serial.println("\n=== NORTHBOUND TRIPS ===");
+  Serial.print("Found ");
+  Serial.print(context.northbound_count);
+  Serial.println(" northbound trips:");
+
+  for (int i = 0; i < context.northbound_count; i++) {
+    Serial.print("  Trip ");
+    Serial.print(context.northbound_trips[i].trip_id);
+    Serial.print(" → ");
     // remove the N or S so we can fetch the stop name from the map
-    char *stopId = context.trips[i].terminal_stop_id;
+    char *stopId = context.northbound_trips[i].terminal_stop_id;
     int stopIdLen = std::strlen(stopId);
     stopId[stopIdLen - 1] = '\0';
     Serial.print(stationMap.at(stopId).c_str());
-
     Serial.print(" @ ");
-    int64_t arrivalTime = context.trips[i].arrival_time - (5 * 3600);
+    int64_t arrivalTime = context.northbound_trips[i].arrival_time - (5 * 3600);
     int64_t diffSeconds = arrivalTime - currentTime.getUnixTime();
     int64_t diffMinutes = diffSeconds / 60;
     char buffer[8];
     sprintf(buffer, "%Ld", diffMinutes);
     Serial.println(buffer);
+    auto pair = std::make_pair(stationMap.at(stopId), diffMinutes);
+    trips.push_back(pair);
   }
+
+  Serial.println("\n=== SOUTHBOUND TRIPS ===");
+  Serial.print("Found ");
+  Serial.print(context.southbound_count);
+  Serial.println(" southbound trips:");
+
+  for (int i = 0; i < context.southbound_count; i++) {
+    Serial.print("  Trip ");
+    Serial.print(context.southbound_trips[i].trip_id);
+    Serial.print(" → ");
+    // remove the N or S so we can fetch the stop name from the map
+    char *stopId = context.southbound_trips[i].terminal_stop_id;
+    int stopIdLen = std::strlen(stopId);
+    stopId[stopIdLen - 1] = '\0';
+    Serial.print(stationMap.at(stopId).c_str());
+    Serial.print(" @ ");
+    int64_t arrivalTime = context.southbound_trips[i].arrival_time - (5 * 3600);
+    int64_t diffSeconds = arrivalTime - currentTime.getUnixTime();
+    int64_t diffMinutes = diffSeconds / 60;
+    char buffer[8];
+    sprintf(buffer, "%Ld", diffMinutes);
+    Serial.println(buffer);
+    auto pair = std::make_pair(stationMap.at(stopId), diffMinutes);
+    trips.push_back(pair);
+  }
+
+
+  tft.fillScreen(RA8875_BLACK);
+
+  drawTrips(trips);
 
   matrix.clear();
   Serial.println(F("Decode successful!"));
@@ -281,6 +359,7 @@ void loop() {
     previousMillis = currentMillis;
 
     if (!client.connected()) {
+      tft.fillScreen(RA8875_BLACK);
       Serial.println(F("Client lost connection to server. Trying to reconnect..."));
       if (!client.connect(g_train_endpoint, 443)) {
         Serial.println(F("Failed to reconnect"));
@@ -347,14 +426,23 @@ bool stop_time_update_callback(pb_istream_t *stream, const pb_field_t *field, vo
 
   // Always update the last stop seen
   strncpy(context->current_last_stop, stop_id, sizeof(context->current_last_stop) - 1);
+  context->current_last_stop[sizeof(context->current_last_stop) - 1] = '\0';
 
-  // Check if this is our target stop
-  if (strcmp(stop_id, context->target_stop_id) == 0) {
-    context->current_trip_has_target = true;
+  // Check if this is the northbound stop
+  if (strcmp(stop_id, context->northbound_stop_id) == 0) {
+    context->current_trip_has_northbound = true;
 
-    // Store arrival time if available
-    if (context->trip_count < MAX_TRIPS && stop_time_update.has_arrival) {
-      context->trips[context->trip_count].arrival_time = stop_time_update.arrival.time;
+    if (stop_time_update.has_arrival) {
+      context->current_northbound_arrival = stop_time_update.arrival.time;
+    }
+  }
+
+  // Check if this is the southbound stop
+  if (strcmp(stop_id, context->southbound_stop_id) == 0) {
+    context->current_trip_has_southbound = true;
+
+    if (stop_time_update.has_arrival) {
+      context->current_southbound_arrival = stop_time_update.arrival.time;
     }
   }
 
@@ -368,7 +456,11 @@ bool feed_entity_callback(pb_istream_t *stream, const pb_field_t *field, void **
 
   // Reset per-trip state
   context->current_last_stop[0] = '\0';
-  context->current_trip_has_target = false;
+  context->current_trip_has_northbound = false;
+  context->current_trip_has_southbound = false;
+  context->current_trip_id[0] = '\0';
+  context->current_northbound_arrival = 0;
+  context->current_southbound_arrival = 0;
 
   // Set up string callback for trip_id
   entity.trip_update.trip.trip_id.funcs.decode = decode_string_callback;
@@ -382,23 +474,44 @@ bool feed_entity_callback(pb_istream_t *stream, const pb_field_t *field, void **
     return false;
   }
 
-  // After processing all stops, check if this trip had our target
-  if (context->current_trip_has_target && context->trip_count < MAX_TRIPS) {
-    // Save this trip's info
-    strncpy(context->trips[context->trip_count].trip_id,
-            context->current_trip_id,
-            sizeof(context->trips[context->trip_count].trip_id) - 1);
+  // After processing all stops, save trip info if it had our target stops
 
-    strncpy(context->trips[context->trip_count].terminal_stop_id,
-            context->current_last_stop,
-            sizeof(context->trips[context->trip_count].terminal_stop_id) - 1);
+  // Save northbound trip info
+  if (context->current_trip_has_northbound && context->northbound_count < MAX_TRIPS) {
 
-    Serial.print("Trip ");
-    Serial.print(context->current_trip_id);
-    Serial.print(" terminates at: ");
-    Serial.println(context->current_last_stop);
+    trip_info_t *trip = &context->northbound_trips[context->northbound_count];
 
-    context->trip_count++;
+    strncpy(trip->trip_id, context->current_trip_id, sizeof(trip->trip_id) - 1);
+    trip->trip_id[sizeof(trip->trip_id) - 1] = '\0';
+
+    strncpy(trip->terminal_stop_id, context->current_last_stop, sizeof(trip->terminal_stop_id) - 1);
+    trip->terminal_stop_id[sizeof(trip->terminal_stop_id) - 1] = '\0';
+
+    strncpy(trip->direction_stop_id, context->northbound_stop_id, sizeof(trip->direction_stop_id) - 1);
+    trip->direction_stop_id[sizeof(trip->direction_stop_id) - 1] = '\0';
+
+    trip->arrival_time = context->current_northbound_arrival;
+
+    context->northbound_count++;
+  }
+
+  // Save southbound trip info
+  if (context->current_trip_has_southbound && context->southbound_count < MAX_TRIPS) {
+
+    trip_info_t *trip = &context->southbound_trips[context->southbound_count];
+
+    strncpy(trip->trip_id, context->current_trip_id, sizeof(trip->trip_id) - 1);
+    trip->trip_id[sizeof(trip->trip_id) - 1] = '\0';
+
+    strncpy(trip->terminal_stop_id, context->current_last_stop, sizeof(trip->terminal_stop_id) - 1);
+    trip->terminal_stop_id[sizeof(trip->terminal_stop_id) - 1] = '\0';
+
+    strncpy(trip->direction_stop_id, context->southbound_stop_id, sizeof(trip->direction_stop_id) - 1);
+    trip->direction_stop_id[sizeof(trip->direction_stop_id) - 1] = '\0';
+
+    trip->arrival_time = context->current_southbound_arrival;
+
+    context->southbound_count++;
   }
 
   return true;
