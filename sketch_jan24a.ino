@@ -127,32 +127,74 @@ void drawBullet(int x, int y) {
   tft.print("G");
 }
 
+std::vector<std::pair<std::string, int>> currentTrips;
+
 void drawTrips(std::vector<std::pair<std::string, int>> trips) {
-  for (int i = 0; i < trips.size(); i++) {
-    tft.setFont(&FreeSansBold18pt7b);
-    std::pair<std::string, int> trip = trips[i];
-    std::string terminal_station_name = trip.first;
-    int minutes_until = trip.second;
+  // if there aren't currently displayed trips, just fully refresh
+  if (!currentTrips.size()) {
+    for (int i = 0; i < trips.size(); i++) {
+      tft.setFont(&FreeSansBold18pt7b);
+      std::pair<std::string, int> trip = trips[i];
+      std::string terminal_station_name = trip.first;
+      int minutes_until = trip.second;
 
-    tft.fillRect(40, (i * 120) + 6, 800 - 30, 110, 0x3166);
-    drawBullet(90, (i * 120) + 60);
-    tft.setTextSize(1);
-    tft.setCursor(7, (i * 120) + 70);
-    tft.print(i + 1);
-    tft.setCursor(140, (i * 120) + 70);
-    tft.print(terminal_station_name.c_str());
+      tft.fillRect(40, (i * 120) + 6, 800 - 30, 110, 0x3166);
+      drawBullet(90, (i * 120) + 60);
+      tft.setTextSize(1);
+      tft.setCursor(7, (i * 120) + 70);
+      tft.print(i + 1);
+      tft.setCursor(140, (i * 120) + 70);
+      tft.print(terminal_station_name.c_str());
 
-    int minutes_until_cursor_x = minutes_until < 10 ? 800 - 75 : 800 - 95;
-    tft.setCursor(minutes_until_cursor_x, (i * 120) + 70);
-    tft.setTextSize(2);
-    // char buffer[8];
-    // sprintf(buffer, "%Ld", minutes_until);
-    tft.print(minutes_until);
-    tft.setFont(&FreeSans9pt7b);
-    tft.setTextSize(0);
-    tft.setCursor(800 - 72, (i * 120) + 95);
-    tft.print("MIN");
+      int minutes_until_cursor_x = minutes_until < 10 ? 800 - 75 : 800 - 95;
+      tft.setCursor(minutes_until_cursor_x, (i * 120) + 70);
+      tft.setTextSize(2);
+      tft.print(minutes_until);
+      tft.setFont(&FreeSans9pt7b);
+      tft.setTextSize(0);
+      tft.setCursor(800 - 72, (i * 120) + 95);
+      tft.print("MIN");
+    }
+  } else {
+    for (int i = 0; i < trips.size(); i++) {
+      std::pair<std::string, int> trip = trips[i];
+      std::string terminal_station_name = trip.first;
+      int minutes_until = trip.second;
+
+      // check the currently displayed trip
+      if (i < currentTrips.size()) {
+        std::pair<std::string, int> currentlyDisplayedTrip = currentTrips.at(i);
+        if (terminal_station_name != currentlyDisplayedTrip.first) {
+          int cursorX = 140, cursorY = (i * 120) + 70;
+          int16_t x1, y1;
+          uint16_t w, h;
+          tft.setFont(&FreeSansBold18pt7b);
+          tft.getTextBounds(currentlyDisplayedTrip.first.c_str(), cursorX, cursorY, &x1, &y1, &w, &h);
+          tft.fillRect(x1, y1, w, h, 0x3166);
+          tft.setCursor(cursorX, cursorY);
+          tft.print(terminal_station_name.c_str());
+        }
+
+        if (minutes_until != currentlyDisplayedTrip.second) {
+          int cursorX = minutes_until < 10 ? 800 - 75 : 800 - 95;
+          int cursorXCurrentTrip = currentlyDisplayedTrip.second < 10 ? 800 - 75 : 800 - 95;
+          int cursorY = (i * 120) + 70;
+          int16_t x1, y1;
+          uint16_t w, h;
+          char buffer[8];
+          sprintf(buffer, "%d", currentlyDisplayedTrip.second);
+          tft.setFont(&FreeSansBold18pt7b);
+          tft.setTextSize(2);
+          tft.getTextBounds(buffer, cursorXCurrentTrip, cursorY, &x1, &y1, &w, &h);
+          tft.fillRect(x1, y1, w, h, 0x3166);
+          tft.setCursor(cursorX, cursorY);
+          tft.print(minutes_until);
+        }
+      }
+    }
   }
+
+  currentTrips = trips;
 }
 
 void setup() {
