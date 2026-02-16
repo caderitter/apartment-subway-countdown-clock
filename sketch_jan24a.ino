@@ -114,7 +114,8 @@ std::map<std::string, std::string> &getStationMap() {
     { "G33", "Bedford-Nostrand Avs" },
     { "G34", "Classon Av" },
     { "G35", "Clinton-Washington Avs" },
-    { "G36", "Fulton St" }
+    { "G36", "Fulton St" },
+    { "A42", "Hoyt-Schermerhorn Sts" }
   };
   return stationMap;
 }
