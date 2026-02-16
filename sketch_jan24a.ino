@@ -209,6 +209,7 @@ void setup() {
     tft.println("Failed.");
   } else {
     tft.println(F("Connected to MTA server!"));
+    tft.fillScreen(RA8875_BLACK);
     fetchAndDecode();
   }
   previousMillis = millis();
@@ -221,7 +222,7 @@ void drawStaticUI() {
   tft.fillRect(20, 85, 680, 75, 0xc618);
 }
 
-#define MAX_TRIPS 2
+#define MAX_TRIPS 10
 
 typedef struct {
   char trip_id[64];
@@ -292,7 +293,8 @@ void fetchAndDecode() {
 
   std::map<std::string, std::string> stationMap = getStationMap();
 
-  std::vector<std::pair<std::string, int>> trips;
+  std::vector<std::pair<std::string, int>> northboundTrips;
+  std::vector<std::pair<std::string, int>> southboundTrips;
 
   Serial.println("\n=== NORTHBOUND TRIPS ===");
   Serial.print("Found ");
@@ -316,7 +318,7 @@ void fetchAndDecode() {
     sprintf(buffer, "%Ld", diffMinutes);
     Serial.println(buffer);
     auto pair = std::make_pair(stationMap.at(stopId), diffMinutes);
-    trips.push_back(pair);
+    northboundTrips.push_back(pair);
   }
 
   Serial.println("\n=== SOUTHBOUND TRIPS ===");
@@ -341,16 +343,41 @@ void fetchAndDecode() {
     sprintf(buffer, "%Ld", diffMinutes);
     Serial.println(buffer);
     auto pair = std::make_pair(stationMap.at(stopId), diffMinutes);
-    trips.push_back(pair);
+    southboundTrips.push_back(pair);
   }
 
+  // remove negatives, sort, and trim down to 2 trips each
+  cleanTrips(northboundTrips);
+  cleanTrips(southboundTrips);
 
-  tft.fillScreen(RA8875_BLACK);
-
-  drawTrips(trips);
+  // concat the trips arrays
+  northboundTrips.insert(northboundTrips.end(), southboundTrips.begin(), southboundTrips.end());
+  drawTrips(northboundTrips);
 
   matrix.clear();
   Serial.println(F("Decode successful!"));
+}
+
+void cleanTrips(std::vector<std::pair<std::string, int>> &trips) {
+  // remove trips with negative time until departure
+  trips.erase(
+    std::remove_if(
+      trips.begin(),
+      trips.end(),
+      [](std::pair<std::string, int> t) {
+        return t.second < 0;
+      }),
+    trips.end());
+
+  // sort
+  std::sort(trips.begin(), trips.end(), [](std::pair<std::string, int> a, std::pair<std::string, int> b) {
+    return a.second < b.second;
+  });
+
+  // trim down to 2
+  trips.resize(2);
+
+  return;
 }
 
 void loop() {
@@ -486,7 +513,6 @@ bool feed_entity_callback(pb_istream_t *stream, const pb_field_t *field, void **
 
   // Save northbound trip info
   if (context->current_trip_has_northbound && context->northbound_count < MAX_TRIPS) {
-
     trip_info_t *trip = &context->northbound_trips[context->northbound_count];
 
     strncpy(trip->trip_id, context->current_trip_id, sizeof(trip->trip_id) - 1);
@@ -505,7 +531,6 @@ bool feed_entity_callback(pb_istream_t *stream, const pb_field_t *field, void **
 
   // Save southbound trip info
   if (context->current_trip_has_southbound && context->southbound_count < MAX_TRIPS) {
-
     trip_info_t *trip = &context->southbound_trips[context->southbound_count];
 
     strncpy(trip->trip_id, context->current_trip_id, sizeof(trip->trip_id) - 1);
